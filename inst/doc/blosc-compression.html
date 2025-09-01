@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+<meta charset="utf-8" />
+<meta name="generator" content="pandoc" />
+<meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
+
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+
+
+
+<title>Blosc Compression</title>
+
+<script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
+// be compatible with the behavior of Pandoc < 2.8).
+document.addEventListener('DOMContentLoaded', function(e) {
+  var hs = document.querySelectorAll("div.section[class*='level'] > :first-child");
+  var i, h, a;
+  for (i = 0; i < hs.length; i++) {
+    h = hs[i];
+    if (!/^h[1-6]$/i.test(h.tagName)) continue;  // it should be a header h1-h6
+    a = h.attributes;
+    while (a.length > 0) h.removeAttribute(a[0].name);
+  }
+});
+</script>
+
+<style type="text/css">
+code{white-space: pre-wrap;}
+span.smallcaps{font-variant: small-caps;}
+span.underline{text-decoration: underline;}
+div.column{display: inline-block; vertical-align: top; width: 50%;}
+div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+ul.task-list{list-style: none;}
+</style>
+
+
+
+<style type="text/css">
+code {
+white-space: pre;
+}
+.sourceCode {
+overflow: visible;
+}
+</style>
+<style type="text/css" data-origin="pandoc">
+pre > code.sourceCode { white-space: pre; position: relative; }
+pre > code.sourceCode > span { line-height: 1.25; }
+pre > code.sourceCode > span:empty { height: 1.2em; }
+.sourceCode { overflow: visible; }
+code.sourceCode > span { color: inherit; text-decoration: inherit; }
+div.sourceCode { margin: 1em 0; }
+pre.sourceCode { margin: 0; }
+@media screen {
+div.sourceCode { overflow: auto; }
+}
+@media print {
+pre > code.sourceCode { white-space: pre-wrap; }
+pre > code.sourceCode > span { display: inline-block; text-indent: -5em; padding-left: 5em; }
+}
+pre.numberSource code
+{ counter-reset: source-line 0; }
+pre.numberSource code > span
+{ position: relative; left: -4em; counter-increment: source-line; }
+pre.numberSource code > span > a:first-child::before
+{ content: counter(source-line);
+position: relative; left: -1em; text-align: right; vertical-align: baseline;
+border: none; display: inline-block;
+-webkit-touch-callout: none; -webkit-user-select: none;
+-khtml-user-select: none; -moz-user-select: none;
+-ms-user-select: none; user-select: none;
+padding: 0 4px; width: 4em;
+color: #aaaaaa;
+}
+pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa; padding-left: 4px; }
+div.sourceCode
+{ }
+@media screen {
+pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+}
+code span.al { color: #ff0000; font-weight: bold; } 
+code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.at { color: #7d9029; } 
+code span.bn { color: #40a070; } 
+code span.bu { color: #008000; } 
+code span.cf { color: #007020; font-weight: bold; } 
+code span.ch { color: #4070a0; } 
+code span.cn { color: #880000; } 
+code span.co { color: #60a0b0; font-style: italic; } 
+code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.do { color: #ba2121; font-style: italic; } 
+code span.dt { color: #902000; } 
+code span.dv { color: #40a070; } 
+code span.er { color: #ff0000; font-weight: bold; } 
+code span.ex { } 
+code span.fl { color: #40a070; } 
+code span.fu { color: #06287e; } 
+code span.im { color: #008000; font-weight: bold; } 
+code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } 
+code span.kw { color: #007020; font-weight: bold; } 
+code span.op { color: #666666; } 
+code span.ot { color: #007020; } 
+code span.pp { color: #bc7a00; } 
+code span.sc { color: #4070a0; } 
+code span.ss { color: #bb6688; } 
+code span.st { color: #4070a0; } 
+code span.va { color: #19177c; } 
+code span.vs { color: #4070a0; } 
+code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } 
+</style>
+<script>
+// apply pandoc div.sourceCode style to pre.sourceCode instead
+(function() {
+  var sheets = document.styleSheets;
+  for (var i = 0; i < sheets.length; i++) {
+    if (sheets[i].ownerNode.dataset["origin"] !== "pandoc") continue;
+    try { var rules = sheets[i].cssRules; } catch (e) { continue; }
+    var j = 0;
+    while (j < rules.length) {
+      var rule = rules[j];
+      // check if there is a div.sourceCode rule
+      if (rule.type !== rule.STYLE_RULE || rule.selectorText !== "div.sourceCode") {
+        j++;
+        continue;
+      }
+      var style = rule.style.cssText;
+      // check if color or background-color is set
+      if (rule.style.color === '' && rule.style.backgroundColor === '') {
+        j++;
+        continue;
+      }
+      // replace div.sourceCode by a pre.sourceCode rule
+      sheets[i].deleteRule(j);
+      sheets[i].insertRule('pre.sourceCode{' + style + '}', j);
+    }
+  }
+})();
+</script>
+
+
+
+
+<style type="text/css">body {
+background-color: #fff;
+margin: 1em auto;
+max-width: 700px;
+overflow: visible;
+padding-left: 2em;
+padding-right: 2em;
+font-family: "Open Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+font-size: 14px;
+line-height: 1.35;
+}
+#TOC {
+clear: both;
+margin: 0 0 10px 10px;
+padding: 4px;
+width: 400px;
+border: 1px solid #CCCCCC;
+border-radius: 5px;
+background-color: #f6f6f6;
+font-size: 13px;
+line-height: 1.3;
+}
+#TOC .toctitle {
+font-weight: bold;
+font-size: 15px;
+margin-left: 5px;
+}
+#TOC ul {
+padding-left: 40px;
+margin-left: -1.5em;
+margin-top: 5px;
+margin-bottom: 5px;
+}
+#TOC ul ul {
+margin-left: -2em;
+}
+#TOC li {
+line-height: 16px;
+}
+table {
+margin: 1em auto;
+border-width: 1px;
+border-color: #DDDDDD;
+border-style: outset;
+border-collapse: collapse;
+}
+table th {
+border-width: 2px;
+padding: 5px;
+border-style: inset;
+}
+table td {
+border-width: 1px;
+border-style: inset;
+line-height: 18px;
+padding: 5px 5px;
+}
+table, table th, table td {
+border-left-style: none;
+border-right-style: none;
+}
+table thead, table tr.even {
+background-color: #f7f7f7;
+}
+p {
+margin: 0.5em 0;
+}
+blockquote {
+background-color: #f6f6f6;
+padding: 0.25em 0.75em;
+}
+hr {
+border-style: solid;
+border: none;
+border-top: 1px solid #777;
+margin: 28px 0;
+}
+dl {
+margin-left: 0;
+}
+dl dd {
+margin-bottom: 13px;
+margin-left: 13px;
+}
+dl dt {
+font-weight: bold;
+}
+ul {
+margin-top: 0;
+}
+ul li {
+list-style: circle outside;
+}
+ul ul {
+margin-bottom: 0;
+}
+pre, code {
+background-color: #f7f7f7;
+border-radius: 3px;
+color: #333;
+white-space: pre-wrap; 
+}
+pre {
+border-radius: 3px;
+margin: 5px 0px 10px 0px;
+padding: 10px;
+}
+pre:not([class]) {
+background-color: #f7f7f7;
+}
+code {
+font-family: Consolas, Monaco, 'Courier New', monospace;
+font-size: 85%;
+}
+p > code, li > code {
+padding: 2px 0px;
+}
+div.figure {
+text-align: center;
+}
+img {
+background-color: #FFFFFF;
+padding: 2px;
+border: 1px solid #DDDDDD;
+border-radius: 3px;
+border: 1px solid #CCCCCC;
+margin: 0 5px;
+}
+h1 {
+margin-top: 0;
+font-size: 35px;
+line-height: 40px;
+}
+h2 {
+border-bottom: 4px solid #f7f7f7;
+padding-top: 10px;
+padding-bottom: 2px;
+font-size: 145%;
+}
+h3 {
+border-bottom: 2px solid #f7f7f7;
+padding-top: 10px;
+font-size: 120%;
+}
+h4 {
+border-bottom: 1px solid #f7f7f7;
+margin-left: 8px;
+font-size: 105%;
+}
+h5, h6 {
+border-bottom: 1px solid #ccc;
+font-size: 105%;
+}
+a {
+color: #0033dd;
+text-decoration: none;
+}
+a:hover {
+color: #6666ff; }
+a:visited {
+color: #800080; }
+a:visited:hover {
+color: #BB00BB; }
+a[href^="http:"] {
+text-decoration: underline; }
+a[href^="https:"] {
+text-decoration: underline; }
+
+code > span.kw { color: #555; font-weight: bold; } 
+code > span.dt { color: #902000; } 
+code > span.dv { color: #40a070; } 
+code > span.bn { color: #d14; } 
+code > span.fl { color: #d14; } 
+code > span.ch { color: #d14; } 
+code > span.st { color: #d14; } 
+code > span.co { color: #888888; font-style: italic; } 
+code > span.ot { color: #007020; } 
+code > span.al { color: #ff0000; font-weight: bold; } 
+code > span.fu { color: #900; font-weight: bold; } 
+code > span.er { color: #a61717; background-color: #e3d2d2; } 
+</style>
+
+
+
+
+</head>
+
+<body>
+
+
+
+
+<h1 class="title toc-ignore">Blosc Compression</h1>
+
+
+
+<div id="compress-with-blosc" class="section level2">
+<h2>Compress with Blosc</h2>
+<div id="input-data" class="section level3">
+<h3>Input data</h3>
+<p>When your input data is of type <code>raw()</code>, it is assumed
+that it encodes a data type where each element is <code>typesize</code>
+bytes long. The data type can be any structured form of data and does
+not necessarily needs to be known. Of course you need to know the
+structure when you need to interpret the data, but that’s not up to the
+Blosc compressor.</p>
+<p>The example below compresses the <code>raw()</code> data assuming
+that the data type is 2 bytes long.</p>
+<div class="sourceCode" id="cb1"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb1-1"><a href="#cb1-1" tabindex="-1"></a><span class="fu">library</span>(blosc)</span>
+<span id="cb1-2"><a href="#cb1-2" tabindex="-1"></a>data_input <span class="ot">&lt;-</span> <span class="fu">as.raw</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">4</span>, <span class="dv">1</span>, <span class="dv">2</span>, <span class="dv">3</span>, <span class="dv">4</span>))</span>
+<span id="cb1-3"><a href="#cb1-3" tabindex="-1"></a><span class="fu">blosc_compress</span>(data_input, <span class="at">typesize =</span> <span class="dv">2</span>)</span>
+<span id="cb1-4"><a href="#cb1-4" tabindex="-1"></a><span class="co">#&gt;  [1] 02 01 12 02 08 00 00 00 08 00 00 00 18 00 00 00 01 02 03 04 01 02 03 04</span></span></code></pre></div>
+<p>Note that the length of the resulting data is actually longer than
+that of the input data. This is because the compressor has an overhead.
+The data set is just too small compared to the overhead.</p>
+<p>Can you compress other data types with Blosc? Yes you can. You first
+have to encode it to a binary form (<code>raw()</code>), with for
+instance <code>r_to_dtype()</code> or any other method that converts
+your data into a <code>raw()</code> format. You can also use the
+<code>dtype</code> argument to encode and compress your data in one go.
+In that case you need to specify an appropriate data type
+(<code>vignette(&quot;dtypes&quot;)</code>).</p>
+<p>The example below shows how to encode <code>numeric()</code> values
+as little-endian 16 bit floating point data (<code>&quot;&lt;f2&quot;</code>) and
+compresses it.</p>
+<div class="sourceCode" id="cb2"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb2-1"><a href="#cb2-1" tabindex="-1"></a><span class="do">## The line below won&#39;t work as the default `typesize` (4) does</span></span>
+<span id="cb2-2"><a href="#cb2-2" tabindex="-1"></a><span class="do">## not match with the dtype size (2)</span></span>
+<span id="cb2-3"><a href="#cb2-3" tabindex="-1"></a><span class="do">## blosc_compress(iris$Petal.Length, dtype = &quot;&lt;f2&quot;)</span></span>
+<span id="cb2-4"><a href="#cb2-4" tabindex="-1"></a></span>
+<span id="cb2-5"><a href="#cb2-5" tabindex="-1"></a><span class="do">## Explicitely set the `typesize` to 2</span></span>
+<span id="cb2-6"><a href="#cb2-6" tabindex="-1"></a>compressed_iris <span class="ot">&lt;-</span></span>
+<span id="cb2-7"><a href="#cb2-7" tabindex="-1"></a>  <span class="fu">blosc_compress</span>(iris<span class="sc">$</span>Petal.Length, <span class="at">typesize =</span> <span class="dv">2</span>, <span class="at">dtype =</span> <span class="st">&quot;&lt;f2&quot;</span>)</span></code></pre></div>
+</div>
+<div id="output" class="section level3">
+<h3>Output</h3>
+<p>The output is always a vector of <code>raw()</code> data. Generally,
+the output data should be smaller than the input data. There are
+exceptions. One is seen above, where the data set is too small in
+comparison with the compressor overhead. Another case is where the data
+is just too random, where the compressor algorithm simply can’t compress
+the data. In the its compressed form, the data can no longer be
+interpreted directly. You need to decompress it first
+(<code>blosc_decompress()</code>).</p>
+</div>
+<div id="compression-algorithms" class="section level3">
+<h3>Compression Algorithms</h3>
+<p>You can pick from several algorithms to compress your data:
+<code>&quot;blosclz&quot;</code>, <code>&quot;lz4&quot;</code>, <code>&quot;lz4hc&quot;</code>,
+<code>&quot;zlib&quot;</code>, or <code>&quot;zstd&quot;</code>. There is not a single
+algorithm that always has the best performance (speed and compression
+level). It really depends on your data and can be tested by trial and
+error. You can also lower the compression <code>level</code> argument if
+you prefer speed over compression level.</p>
+</div>
+</div>
+<div id="decompress-with-blosc" class="section level2">
+<h2>Decompress with Blosc</h2>
+<div id="input-data-1" class="section level3">
+<h3>Input data</h3>
+<p>The decompression function (<code>blosc_decompress()</code>) only
+accepts <code>raw()</code> data that has been compressed with Blosc. It
+doesn’t have to be created in <code>R</code>, it can be generated with
+any software using the <a href="https://github.com/Blosc/c-blosc">c-blosc library</a>.</p>
+<p>You don’t have to specify the compression algorithm, typesize or
+anything else. All that information is embedded in the header of the raw
+input data. You can even retrieve this information with:</p>
+<div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="fu">blosc_info</span>( compressed_iris )</span>
+<span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="co">#&gt; $Compressor</span></span>
+<span id="cb3-3"><a href="#cb3-3" tabindex="-1"></a><span class="co">#&gt; [1] &quot;BloscLZ&quot;</span></span>
+<span id="cb3-4"><a href="#cb3-4" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-5"><a href="#cb3-5" tabindex="-1"></a><span class="co">#&gt; $`Blosc format version`</span></span>
+<span id="cb3-6"><a href="#cb3-6" tabindex="-1"></a><span class="co">#&gt; [1] 2</span></span>
+<span id="cb3-7"><a href="#cb3-7" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-8"><a href="#cb3-8" tabindex="-1"></a><span class="co">#&gt; $`Internal compressor version`</span></span>
+<span id="cb3-9"><a href="#cb3-9" tabindex="-1"></a><span class="co">#&gt; [1] 1</span></span>
+<span id="cb3-10"><a href="#cb3-10" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-11"><a href="#cb3-11" tabindex="-1"></a><span class="co">#&gt; $`Type size in bytes`</span></span>
+<span id="cb3-12"><a href="#cb3-12" tabindex="-1"></a><span class="co">#&gt; [1] 2</span></span>
+<span id="cb3-13"><a href="#cb3-13" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-14"><a href="#cb3-14" tabindex="-1"></a><span class="co">#&gt; $`Block size in bytes`</span></span>
+<span id="cb3-15"><a href="#cb3-15" tabindex="-1"></a><span class="co">#&gt; [1] 300</span></span>
+<span id="cb3-16"><a href="#cb3-16" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-17"><a href="#cb3-17" tabindex="-1"></a><span class="co">#&gt; $`Uncompressed size in bytes`</span></span>
+<span id="cb3-18"><a href="#cb3-18" tabindex="-1"></a><span class="co">#&gt; [1] 300</span></span>
+<span id="cb3-19"><a href="#cb3-19" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a><span class="co">#&gt; $`Compressed size in bytes`</span></span>
+<span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a><span class="co">#&gt; [1] 316</span></span>
+<span id="cb3-22"><a href="#cb3-22" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-23"><a href="#cb3-23" tabindex="-1"></a><span class="co">#&gt; $Shuffle</span></span>
+<span id="cb3-24"><a href="#cb3-24" tabindex="-1"></a><span class="co">#&gt; [1] FALSE</span></span>
+<span id="cb3-25"><a href="#cb3-25" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-26"><a href="#cb3-26" tabindex="-1"></a><span class="co">#&gt; $`Pure memcpy`</span></span>
+<span id="cb3-27"><a href="#cb3-27" tabindex="-1"></a><span class="co">#&gt; [1] TRUE</span></span>
+<span id="cb3-28"><a href="#cb3-28" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-29"><a href="#cb3-29" tabindex="-1"></a><span class="co">#&gt; $`Bit shuffle`</span></span>
+<span id="cb3-30"><a href="#cb3-30" tabindex="-1"></a><span class="co">#&gt; [1] FALSE</span></span>
+<span id="cb3-31"><a href="#cb3-31" tabindex="-1"></a><span class="co">#&gt; </span></span>
+<span id="cb3-32"><a href="#cb3-32" tabindex="-1"></a><span class="co">#&gt; attr(,&quot;class&quot;)</span></span>
+<span id="cb3-33"><a href="#cb3-33" tabindex="-1"></a><span class="co">#&gt; [1] &quot;blosc_info&quot; &quot;list&quot;</span></span></code></pre></div>
+</div>
+<div id="output-1" class="section level3">
+<h3>Output</h3>
+<p>If you don’t specify the output type, the decompression routine
+returns <code>raw()</code> data. Do you remember the iris length data
+that we compressed earlier? We can simply decompress it by calling
+<code>blosc_decompress()</code>.</p>
+<div class="sourceCode" id="cb4"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb4-1"><a href="#cb4-1" tabindex="-1"></a>iris_length1 <span class="ot">&lt;-</span> <span class="fu">blosc_decompress</span>(compressed_iris)</span>
+<span id="cb4-2"><a href="#cb4-2" tabindex="-1"></a><span class="fu">head</span>(iris_length1)</span>
+<span id="cb4-3"><a href="#cb4-3" tabindex="-1"></a><span class="co">#&gt; [1] 99 3d 99 3d 33 3d</span></span></code></pre></div>
+<p>It works, but we got <code>raw()</code> data as output. This is
+because the decompressor knows little about the data structure of the
+decompressed data. Since we know that we have encoded it as
+little-endian 16 bit floating point values (<code>&quot;&lt;f2&quot;</code>), we
+can specify it as such. Once specified, the function will automatically
+decode the data.</p>
+<div class="sourceCode" id="cb5"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb5-1"><a href="#cb5-1" tabindex="-1"></a>iris_length2 <span class="ot">&lt;-</span> <span class="fu">blosc_decompress</span>(compressed_iris, <span class="at">dtype =</span> <span class="st">&quot;&lt;f2&quot;</span>)</span>
+<span id="cb5-2"><a href="#cb5-2" tabindex="-1"></a><span class="fu">hist</span>(iris_length2)</span></code></pre></div>
+<p><img role="img" src="data:image/png;base64,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" width="50%" /></p>
+</div>
+</div>
+
+
+
+<!-- code folding -->
+
+
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+  (function () {
+    var script = document.createElement("script");
+    script.type = "text/javascript";
+    script.src  = "https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+    document.getElementsByTagName("head")[0].appendChild(script);
+  })();
+</script>
+
+</body>
+</html>
