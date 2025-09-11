@@ -1,6 +1,7 @@
 #include <cpp11.hpp>
 #include <regex>
 #include "umHalf.h"
+#include "blosc.h"
 
 using namespace cpp11;
 
@@ -8,13 +9,13 @@ using namespace cpp11;
 #define isleap(y) ((((y) % 4) == 0 && ((y) % 100) != 0) || ((y) % 400) == 0)
 #define days_in_year(year) (isleap(year) ? 366 : 365)
 #define days_in_month(mon, yr) ((mon == 1 && isleap(1900+yr)) ? 29 : month_days[mon])
-#define MAX_DTYPE_SIZE 255
+#define DIFFTIME_SIZE 5
 
 static const int month_days[12] =
   {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
 static const char *dt_units[] = {
- "W", "D", "h", "m", "s", "ms", "us", "μs", "ns", "ps", "fs", "as"
+  "W", "D", "h", "m", "s", "ms", "us", "μs", "ns", "ps", "fs", "as"
 };
 
 static const double to_seconds[] {
@@ -62,9 +63,10 @@ union conversion_t {
   double    f8;
   complex32 c8;
   complex64 c16;
+  char      S[BLOSC_MAX_TYPESIZE];
 };
 
-bool convert_data(uint8_t *input, int rtype, int n, blosc_dtype dtype,
+bool convert_data(uint8_t *input, SEXP input_sexp, int rtype, int n, blosc_dtype dtype,
                   uint8_t *output, sexp na_value);
 bool convert_data_inv(conversion_t *input, blosc_dtype dtype,
                       int rtype, uint8_t *output, sexp na_value);
@@ -73,13 +75,13 @@ void byte_swap(uint8_t * data, blosc_dtype dtype, uint32_t n);
 void getYM(double d, int64_t &mon, int64_t &Y) {
   bool valid = R_FINITE(d) != 0;
   int64_t y = 1970, tmp;
-
+  
   if(valid) {
     /* every 400 years is exactly 146097 days long and the
      pattern is repeated */
     double rounds = floor(floor(d) / 146097.0);
     int64_t day = (int64_t) (floor(d) - 146097.0 * rounds);
-
+    
     /* year & day within year */
     if (day >= 0)
       for ( ; day >= (tmp = days_in_year(y)); day -= tmp, y++);
@@ -99,6 +101,16 @@ void getYM(double d, int64_t &mon, int64_t &Y) {
   Y = y + 1900;
 }
 
+[[cpp11::register]]
+strings check_dt_units() {
+  R_xlen_t n = std::size(dt_units);
+  writable::strings result(n);
+  for (int i = 0; i < (int)n; i++) {
+    result[i] = dt_units[i];
+  }
+  return result;
+}
+
 blosc_dtype prepare_dtype(std::string dtype) {
   blosc_dtype dt;
   int dlen = dtype.length();
@@ -115,7 +127,7 @@ blosc_dtype prepare_dtype(std::string dtype) {
 #endif
     
     dt.main_type = dtype.c_str()[1];
-    std::string accepted_types = "biufcmM";
+    std::string accepted_types = "biufcmMSU";
     if (accepted_types.find(dt.main_type) == std::string::npos)
       stop("Datatype '%c' not known or implemented", dt.main_type);
     
@@ -127,7 +139,7 @@ blosc_dtype prepare_dtype(std::string dtype) {
       bz *= 10;
       bz += s;
     }
-    if (bz < 1 || bz > MAX_DTYPE_SIZE) stop("Invalid byte size");
+    if (bz < 1 || bz > BLOSC_MAX_TYPESIZE) stop("Invalid byte size");
     dt.byte_size = (uint8_t)bz;
     
     
@@ -165,7 +177,7 @@ blosc_dtype prepare_dtype(std::string dtype) {
         }
       }
     }
-
+    
     return dt;
 }
 
@@ -206,12 +218,15 @@ sexp check_na(sexp na_value, int rtype) {
     if (rtype == LGLSXP) rt = INTSXP;
     if (rtype == CPLXSXP) rt = REALSXP;
     double d = 0;
+    std::string s = CHAR(NA_STRING);
     if (TYPEOF(na_value) == CPLXSXP) {
       d = COMPLEX(na_value)[0].r;
     } else if (TYPEOF(na_value) == REALSXP) {
       d = REAL(na_value)[0];
     } else if (TYPEOF(na_value) == INTSXP) {
       d = (double)(INTEGER(na_value)[0]);
+    } else if (TYPEOF(na_value) == STRSXP) {
+      s = std::string(CHAR(STRING_PTR_RO(na_value)[0]));
     } else {
       return R_NilValue;
     }
@@ -223,6 +238,11 @@ sexp check_na(sexp na_value, int rtype) {
     else if(rt == REALSXP) {
       writable::doubles result((R_xlen_t)1);
       result[0] = d;
+      return result;
+    }
+    else if(rt == STRSXP) {
+      writable::strings result((R_xlen_t)1);
+      result[0] = s;
       return result;
     }
     else return R_NilValue;
@@ -281,6 +301,52 @@ sexp dtype_to_r_(raws data, std::string dtype, sexp na_value) {
     mult_factor = 2;
     result = writable::doubles((R_xlen_t) 2 * n);
     dest = (uint8_t *)REAL(result);
+  } else if (dt.main_type == 'S') {
+    sexp new_na_value = check_na(na_value, STRSXP);
+    
+    std::string na_str;
+    if (Rf_isNull(new_na_value)) {
+      na_str = std::string(CHAR(NA_STRING));
+    } else {
+      na_str = std::string(CHAR(STRING_PTR_RO(new_na_value)[0]));
+    }
+    writable::strings res_str((R_xlen_t) n);
+    char buffer[BLOSC_MAX_TYPESIZE + 1];
+    for (int i = 0; i < n; i ++) {
+      memset(buffer, 0x00, BLOSC_MAX_TYPESIZE + 1);
+      memcpy(buffer, src + i * dt.byte_size, dt.byte_size);
+      res_str[i] = std::string(buffer);
+      if (res_str[i] == na_str) res_str[i] = NA_STRING;
+    }
+    return(res_str);
+  } else if (dt.main_type == 'U') {
+    sexp new_na_value = check_na(na_value, STRSXP);
+    
+    std::string na_str;
+    if (Rf_isNull(new_na_value)) {
+      na_str = std::string(CHAR(NA_STRING));
+    } else {
+      na_str = std::string(CHAR(STRING_PTR_RO(new_na_value)[0]));
+    }
+    if (n % 4 != 0) stop("Unicode characters should consist of 4 bytes!");
+    auto intToUtf8 = package("base")["intToUtf8"];
+    writable::strings res_str((R_xlen_t) n/4);
+    
+    writable::integers val((R_xlen_t)1);
+    char buffer[BLOSC_MAX_TYPESIZE + 1];
+    for (int i = 0; i < n/4; i ++) {
+      memset(buffer, 0x00, BLOSC_MAX_TYPESIZE + 1);
+      for (int j = 0; j < dt.byte_size; j++) {
+        val[0] = ((int *)src)[i*dt.byte_size + j];
+        sexp code = intToUtf8(val);
+        if (Rf_isNull(code) || LENGTH(code) != 1) stop("Failed to convert Unicode");
+        memcpy(buffer + j, CHAR(STRING_PTR_RO(code)[0]), 1);
+      }
+      res_str[i] = std::string(buffer);
+      if (res_str[i] == na_str) res_str[i] = NA_STRING;
+    }
+    
+    return(res_str);
   } else {
     stop("Cannot convert data type to an R type");
   }
@@ -295,7 +361,6 @@ sexp dtype_to_r_(raws data, std::string dtype, sexp na_value) {
   
   bool warn = false;
   sexp new_na_value = check_na(na_value, TYPEOF(result));
-  
   for (int i = 0; i < mult_factor * n; i++) {
     conv = empty;
     memcpy(&conv, src + i * dt.byte_size / mult_factor, dt.byte_size / mult_factor);
@@ -303,7 +368,7 @@ sexp dtype_to_r_(raws data, std::string dtype, sexp na_value) {
       convert_data_inv(&conv, dt, TYPEOF(result), dest + i*out_size, new_na_value);
     if (should_warn) warn = true;
   }
-
+  
   if (dt.main_type == 'c') {
     // in case of 'c' convert doubles to complex vector
     // This could be simplified once `cpp11` implements Rcomplex vectors
@@ -317,7 +382,7 @@ sexp dtype_to_r_(raws data, std::string dtype, sexp na_value) {
     result.attr("class") = writable::strings({"POSIXct", "POSIXt"});
     result.attr("tzone") = writable::strings((r_string)"UTC");
     double *d = REAL(result);
-
+    
     for (int j = 0; j < n; j++) {
       memcpy(&bigint, (int64_t *)(&(d[j])), sizeof(double));
       if (dt.unit_conversion > 0) {
@@ -341,7 +406,7 @@ sexp dtype_to_r_(raws data, std::string dtype, sexp na_value) {
     writable::strings unts((R_xlen_t)1);
     int target_unit = -1;
     double unt_conv = 1;
-    for (int j = 0; j < (int)std::size(difftime_units_cor); j ++) {
+    for (int j = 0; j < DIFFTIME_SIZE; j ++) {
       if (difftime_units_cor[j] == dt.unit) {
         target_unit = j;
         break;
@@ -351,9 +416,9 @@ sexp dtype_to_r_(raws data, std::string dtype, sexp na_value) {
     if (target_unit < 0) {
       
       for (int j = (int)std::size(dt_units) - 1; j >= 0; j--) {
-        if (dt.unit == dt_units[j]) start = j;
-        for (int k = 0; k < (int)std::size(difftime_units_cor); k++) {
-          if (difftime_units_cor[k] == dt_units[j]) {
+        if (!dt.unit.compare(dt_units[j])) start = j;
+        for (int k = 0; k < DIFFTIME_SIZE; k++) {
+          if (!std::string(difftime_units_cor[k]).compare(dt_units[j])) {
             target_unit = k;
             end = j;
             break;
@@ -361,13 +426,16 @@ sexp dtype_to_r_(raws data, std::string dtype, sexp na_value) {
         }
         if (target_unit >= 0) break;
       }
-      unt_conv = to_seconds[end]/to_seconds[start];
+      if (target_unit < 0 || end < 0 || start < 0)
+        stop("Failed to convert [%s] to appropriate difftime unit",
+             dt.unit.c_str());
+      
+      else unt_conv = to_seconds[end]/to_seconds[start];
     }
     
-    if (target_unit < 0) stop("Failed to convert to appropriate unit");
     unts[0] = difftime_units[target_unit];
     result.attr("units") = unts;
-
+    
     double *d = REAL(result);
     
     for (int j = 0; j < n; j++) {
@@ -408,7 +476,7 @@ bool convert_data_inv(conversion_t *input, blosc_dtype dtype,
     } else if (dtype.main_type == 'u' && dtype.byte_size == 2) {
       i = (int)(*input).u2;
     } else stop("Conversion not implemented");
-
+    
     if (!ignore_na) {
       int nval = INTEGER(na_value)[0];
       if (i == NA_INTEGER && nval != NA_INTEGER) warn_na = true;
@@ -437,7 +505,7 @@ bool convert_data_inv(conversion_t *input, blosc_dtype dtype,
     } else if (dtype.main_type == 'c' && dtype.byte_size == 16) {
       d = (*input).f8;
     } else  stop("Conversion not implemented");
-
+    
     if (!ignore_na) {
       double nval = REAL(na_value)[0];
       if (dtype.main_type == 'M' || dtype.main_type == 'm') {
@@ -458,15 +526,16 @@ bool convert_data_inv(conversion_t *input, blosc_dtype dtype,
     }
     
     memcpy(output, &d, sizeof(double));
-  } else if (rtype == CPLXSXP) stop("This type should not occure as it is coded as REALs at this stage");
-  else  stop("Conversion method not available");
-
+  } else if (rtype == CPLXSXP) {
+    stop("This type should not occure as it is coded as REALs at this stage");
+  } else stop("Conversion method not available");
+  
   return warn_na;
 }
 
-bool convert_data(uint8_t *input, int rtype, int n,
+bool convert_data(uint8_t *input, SEXP input_data, int rtype, int n,
                   blosc_dtype dtype, uint8_t *output, sexp na_value) {
-
+  
   sexp new_na_value = check_na(na_value, rtype);
   bool warn_na = false, ignore_na = Rf_isNull(new_na_value);
   conversion_t empty, conv;
@@ -475,8 +544,10 @@ bool convert_data(uint8_t *input, int rtype, int n,
   cempty.imaginary = 0.0;
   empty.c16 = cempty; // <== an empty conversion type (all bits set to zero)
   int64_t bigint = 0;
+  //std::wstring_convert<std::codecvt_utf8<char32_t>, char32_t> convert;
+  
   for (int i = 0; i < n; i++) {
-
+    
     conv = empty;
     if (rtype == LGLSXP) {
       if (dtype.main_type == 'b') {
@@ -484,61 +555,61 @@ bool convert_data(uint8_t *input, int rtype, int n,
         if (!ignore_na && ((int *)input)[i] == NA_INTEGER)
           conv.i1 = (int8_t)(0xff & INTEGER(new_na_value)[0]); else
             conv.b1 = (((int *)input)[i] != 0);
-        if (!ignore_na && ((int *)input)[i] == (0xff & INTEGER(new_na_value)[0]))
-          warn_na = true;
-        
+          if (!ignore_na && ((int *)input)[i] == (0xff & INTEGER(new_na_value)[0]))
+            warn_na = true;
+          
       } else {
         UNPROTECT(1); // input data
         stop("Failed to convert data");
       }
     } else if (rtype == INTSXP) {
       if (dtype.main_type == 'i' || dtype.main_type == 'u') {
-
+        
         if (!ignore_na && ((int *)input)[i] == NA_INTEGER)
           conv.i8 = (int64_t)INTEGER(new_na_value)[0]; else {
             conv.i8 = (int64_t)((int *)input)[i];
             if (!ignore_na && ((int *)input)[i] == INTEGER(new_na_value)[0])
               warn_na = true;
           }
-
+          
       } else {
         UNPROTECT(1); // Input data for this function is protected
         stop("Failed to convert data");
       }
     } else if (rtype == REALSXP) {
       if (dtype.main_type == 'i') {
-
+        
         if (!ignore_na && R_IsNA(((double *)input)[i]))
           conv.i8 = (int64_t)REAL(new_na_value)[0]; else {
             conv.i8 = (int64_t)((double *)input)[i];
             if (!ignore_na && ((double *)input)[i] == REAL(new_na_value)[0])
               warn_na = true;
           }
-
+          
       } else if (dtype.main_type == 'f' && dtype.byte_size == 2) {
-
+        
         float16 f;
-
+        
         if (!ignore_na && R_IsNA(((double *)input)[i]))
           f = REAL(new_na_value)[0]; else {
             f = ((double *)input)[i];
             if (!ignore_na && ((double *)input)[i] == REAL(new_na_value)[0])
               warn_na = true;
           }
-
+          
           conv.f2 = f.GetBits();
-
+          
       } else if (dtype.main_type == 'f' && dtype.byte_size == 4) {
-
+        
         if (!ignore_na && R_IsNA(((double *)input)[i]))
           conv.f4 = (float)REAL(new_na_value)[0]; else {
             conv.f4 = (float)((double *)input)[i];
             if (!ignore_na && ((double *)input)[i] == REAL(new_na_value)[0])
               warn_na = true;
           }
-
+          
       } else if (dtype.main_type == 'f' && dtype.byte_size == 8) {
-
+        
         if (!ignore_na && R_IsNA(((double *)input)[i]))
           conv.f8 = REAL(new_na_value)[0]; else {
             conv.f8 = ((double *)input)[i];
@@ -547,7 +618,7 @@ bool convert_data(uint8_t *input, int rtype, int n,
           }
       } else if ((dtype.main_type == 'M' || dtype.main_type == 'm') &&
         dtype.byte_size == 8) {
-
+        
         if (!ignore_na && R_IsNA(((double *)input)[i])) {
           conv.f8 = REAL(new_na_value)[0];
         } else {
@@ -568,7 +639,7 @@ bool convert_data(uint8_t *input, int rtype, int n,
           } else if (dtype.unit == "M") {
             mon = yr*12 + mon - 1;
             memcpy(&conv.f8, (double *)(&mon), sizeof(double));
-
+            
           } else {
             UNPROTECT(1); // Input data for this function is protected
             stop("Unable to convert unit");
@@ -576,8 +647,7 @@ bool convert_data(uint8_t *input, int rtype, int n,
         }
         if (!ignore_na && conv.f8 == REAL(new_na_value)[0])
           warn_na = true;
-
-
+        
       } else {
         UNPROTECT(1); // Input data for this function is protected
         stop("Failed to convert data");
@@ -585,7 +655,7 @@ bool convert_data(uint8_t *input, int rtype, int n,
     } else if (rtype == CPLXSXP) {
       if (dtype.main_type == 'c') {
         if (dtype.byte_size == 8) {
-
+          
           // In R a complex number is a type consisting of two doubles (r(eal) and i(maginary))
           double re = ((double *)input)[2*i];
           double im = ((double *)input)[2*i + 1];
@@ -598,9 +668,9 @@ bool convert_data(uint8_t *input, int rtype, int n,
             if (!ignore_na && R_IsNA(REAL(new_na_value)[0]))
               warn_na = true;
           }
-
+          
         } else if (dtype.byte_size == 16) {
-
+          
           double re = ((double *)input)[2*i];
           double im = ((double *)input)[2*i + 1];
           if (!ignore_na && (R_IsNA(re) || R_IsNA(im))) {
@@ -612,7 +682,7 @@ bool convert_data(uint8_t *input, int rtype, int n,
             if (!ignore_na && R_IsNA(REAL(new_na_value)[0]))
               warn_na = true;
           }
-
+          
         } else {
           UNPROTECT(1); // Input data for this function is protected
           stop("Failed to convert data");
@@ -621,20 +691,53 @@ bool convert_data(uint8_t *input, int rtype, int n,
         UNPROTECT(1); // Input data for this function is protected
         stop("Failed to convert data");
       }
+    } else if (rtype == STRSXP) {
+      strings id(input_data);
+      int len = (int)std::string(id[i]).size();
+      
+      std::string s(CHAR(NA_STRING));
+      if (!Rf_isNull(new_na_value)) s = CHAR(STRING_PTR_RO(new_na_value)[0]);
+      if (id[i] == NA_STRING && id[i] == s) warn_na = true;
+      if (id[i] != NA_STRING) s = id[i];
+      len = s.size();
+      
+      if (len > dtype.byte_size) len = dtype.byte_size;
+      if (dtype.main_type == 'S') {
+        memset(output + i*dtype.byte_size, 0x00, dtype.byte_size);
+        memcpy(output + i*dtype.byte_size, s.c_str(), len);
+        continue;
+      } else if (dtype.main_type == 'U') {
+        // Note that errors in utf8ToInt are not caught
+        // and may cause a protection imbalance
+        auto utf8ToInt = package("base")["utf8ToInt"];
+        r_string sr = s;
+        sexp code = utf8ToInt(sr);
+        memset(output + i*dtype.byte_size*4, 0x00, dtype.byte_size*4);
+        memcpy(output + i*dtype.byte_size*4, INTEGER(code), LENGTH(code)*sizeof(int));
+        continue;
+        
+      } else {
+        UNPROTECT(1); // Input data for this function is protected
+        stop("Failed to convert data");
+      }
+      UNPROTECT(1);
+    } else {
+      UNPROTECT(1); // Input data for this function is protected
+      stop("Conversion not implemented");
     }
     memcpy(output + i * dtype.byte_size, &conv, dtype.byte_size);
   }
-
+  
   return warn_na;
 }
 
 [[cpp11::register]]
 raws r_to_dtype_(sexp data, std::string dtype, sexp na_value) {
   blosc_dtype dt = prepare_dtype(dtype);
-
+  
   if (!Rf_isVector(data)) stop("Input data is not a vector!");
   sexp dat;
-
+  
   int n = LENGTH(data);
   uint8_t *ptr_in;
   if (dt.main_type == 'b' && dt.byte_size == 1) {
@@ -659,13 +762,18 @@ raws r_to_dtype_(sexp data, std::string dtype, sexp na_value) {
   } else if(dt.main_type == 'c' && dt.byte_size <= 16) {
     dat = PROTECT(Rf_coerceVector(data, CPLXSXP));
     ptr_in = (uint8_t *)COMPLEX(dat);
+  } else if (dt.main_type == 'S' || dt.main_type == 'U') {
+    dat = PROTECT(Rf_coerceVector(data, STRSXP));
+    ptr_in = nullptr; // Cannot read directly from raw data
   } else {
-    stop("Cannot convert data type to an R type");
+    stop("Cannot convert R type to specified data type");
   }
-  writable::raws result((R_xlen_t)n*dt.byte_size);
+  int factor = 1;
+  if (dt.main_type == 'U') factor = 4;
+  writable::raws result((R_xlen_t)n*dt.byte_size*factor);
   uint8_t * ptr = (uint8_t *)(RAW(as_sexp(result)));
   
-  bool warn_na = convert_data(ptr_in, TYPEOF(dat), n, dt, ptr, na_value);
+  bool warn_na = convert_data(ptr_in, dat, TYPEOF(dat), n, dt, ptr, na_value);
   if (dt.needs_byteswap) byte_swap(ptr, dt, n);
   UNPROTECT(1); // unprotect dat
   if (warn_na) warning("Data contains values equal to the value representing missing values!");
@@ -681,7 +789,7 @@ void byte_swap(uint8_t * data, blosc_dtype dtype, uint32_t n) {
     n2 = n*2;
   }
   if (bs == 1) return; // Nothing to swap
-  uint8_t buffer[MAX_DTYPE_SIZE];
+  uint8_t buffer[BLOSC_MAX_TYPESIZE];
   for (uint32_t i = 0; i < n2; i++) {
     for (int j = 0; j < bs; j++) {
       buffer[j] = data[(i + 1) * bs - j - 1];

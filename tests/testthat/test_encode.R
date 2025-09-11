@@ -39,6 +39,17 @@ test_that("POSXlt is accepted", {
   })
 })
 
+test_that("units are initialised", {
+  expect_identical(
+    blosc:::check_dt_units(),
+    c("W", "D", "h", "m", "s", "ms", "us", "μs", "ns", "ps", "fs", "as")
+  )
+})
+
+test_that("unit is extracted correctly from dtype code", {
+  expect_identical(blosc:::dtype_to_list_("<m8[ns]")$unit, "ns")
+})
+
 test_that("difftime is accepted", {
   expect_true({
     all(r_to_dtype(as.difftime(1, units = "days"), dtype = "<m8[D]") == 
@@ -48,9 +59,17 @@ test_that("difftime is accepted", {
 
 test_that("difftime is converted when unit is not known by R", {
   expect_true({
+    ## Converts raw data in Zarr 'dtype' format to an R type.
+    ## The dtype specifies the unit in nanoseconds, a unit
+    ## that 'difftime' does not understand. The code should
+    ## automatically convert the number to a unit it does
+    ## understand
     abs(1 - as.numeric(
       dtype_to_r(
-        as.raw(c(0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0)), "<m8[ns]")) /
+        ## Raw data and dtype '<m8[ns]' is little endian 8 bit integer
+        ## reflecting time difference in nanoseconds.
+        as.raw(c(0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0)), "<m8[ns]"),
+      units = "secs") /
         1e+9) < 1e-6
   })
 })

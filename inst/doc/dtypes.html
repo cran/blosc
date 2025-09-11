@@ -463,6 +463,19 @@ with caution</td>
 integer, whereas <code>difftime</code> stores the object as a
 <code>double</code>. Use with caution</td>
 </tr>
+<tr class="odd">
+<td><code>|S*</code></td>
+<td colspan="2">UTF8 string</td>
+<td><code>character()</code></td>
+<td></td>
+</tr>
+<tr class="even">
+<td><code>|U*</code></td>
+<td colspan="2">UTF32 string</td>
+<td><code>character()</code></td>
+<td>Note that UTF8 encoding is used in the conversion process. Hence,
+information may get lost. Use with caution</td>
+</tr>
 </tbody>
 </table>
 <p>Some examples of encoding r data to dtypes</p>
@@ -478,7 +491,9 @@ integer, whereas <code>difftime</code> stores the object as a
 <span id="cb1-10"><a href="#cb1-10" tabindex="-1"></a><span class="fu">r_to_dtype</span>(<span class="fu">as.POSIXct</span>(<span class="st">&quot;2023-06-23 15:32:19&quot;</span>, <span class="at">tz =</span> <span class="st">&quot;UTC&quot;</span>), <span class="st">&quot;&lt;M8[ms]&quot;</span>)</span>
 <span id="cb1-11"><a href="#cb1-11" tabindex="-1"></a><span class="co">#&gt; [1] b8 83 e2 e8 88 01 00 00</span></span>
 <span id="cb1-12"><a href="#cb1-12" tabindex="-1"></a><span class="fu">r_to_dtype</span>(<span class="fu">as.difftime</span>(<span class="dv">1</span>, <span class="at">units =</span> <span class="st">&quot;weeks&quot;</span>), <span class="st">&quot;&lt;m8[D]&quot;</span>)</span>
-<span id="cb1-13"><a href="#cb1-13" tabindex="-1"></a><span class="co">#&gt; [1] 07 00 00 00 00 00 00 00</span></span></code></pre></div>
+<span id="cb1-13"><a href="#cb1-13" tabindex="-1"></a><span class="co">#&gt; [1] 07 00 00 00 00 00 00 00</span></span>
+<span id="cb1-14"><a href="#cb1-14" tabindex="-1"></a><span class="fu">r_to_dtype</span>(<span class="fu">c</span>(<span class="st">&quot;foo&quot;</span>, <span class="st">&quot;bar&quot;</span>, <span class="st">&quot;foobar&quot;</span>), <span class="st">&quot;|S6&quot;</span>)</span>
+<span id="cb1-15"><a href="#cb1-15" tabindex="-1"></a><span class="co">#&gt;  [1] 66 6f 6f 00 00 00 62 61 72 00 00 00 66 6f 6f 62 61 72</span></span></code></pre></div>
 </div>
 <div id="precision-of-types" class="section level2">
 <h2>Precision of Types</h2>
@@ -512,7 +527,7 @@ missing values. This is also what <code>R</code> does for
 <code>NA</code> values. Other software may use different values to
 represent missing values. Also, some data types have insufficient
 storage capacity to store <code>R</code> <code>NA</code> values</p>
-<p>The examples below show how you can use custom values to prepresent
+<p>The examples below show how you can use custom values to represent
 missing values.</p>
 <div class="sourceCode" id="cb3"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb3-1"><a href="#cb3-1" tabindex="-1"></a><span class="do">## As `na_value` is not specified for `dtype_to_r()`</span></span>
 <span id="cb3-2"><a href="#cb3-2" tabindex="-1"></a><span class="do">## and the NA value is masked to 8 bit, the `NA`</span></span>
@@ -533,7 +548,7 @@ missing values.</p>
 <span id="cb3-17"><a href="#cb3-17" tabindex="-1"></a><span class="co">#&gt; [1]    1 -999    4    5</span></span>
 <span id="cb3-18"><a href="#cb3-18" tabindex="-1"></a></span>
 <span id="cb3-19"><a href="#cb3-19" tabindex="-1"></a><span class="do">## If the `na_value` is specified for `dtype_to_r()`,</span></span>
-<span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a><span class="do">## it will interpreted as NA</span></span>
+<span id="cb3-20"><a href="#cb3-20" tabindex="-1"></a><span class="do">## it will be interpreted as NA</span></span>
 <span id="cb3-21"><a href="#cb3-21" tabindex="-1"></a><span class="fu">r_to_dtype</span>(<span class="fu">c</span>(<span class="dv">1</span>, <span class="cn">NA</span>, <span class="dv">4</span>, <span class="dv">5</span>), <span class="st">&quot;&lt;i4&quot;</span>, <span class="at">na_value =</span> <span class="sc">-</span><span class="dv">999</span>) <span class="sc">|&gt;</span></span>
 <span id="cb3-22"><a href="#cb3-22" tabindex="-1"></a>  <span class="fu">dtype_to_r</span>(<span class="st">&quot;&lt;i4&quot;</span>, <span class="at">na_value =</span> <span class="sc">-</span><span class="dv">999</span>)</span>
 <span id="cb3-23"><a href="#cb3-23" tabindex="-1"></a><span class="co">#&gt; [1]  1 NA  4  5</span></span></code></pre></div>

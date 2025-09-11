@@ -1,3 +1,19 @@
+# blosc 0.1.1
+
+* Addressed CRAN check issues
+* Switched from anticonf to autoconf setup
+
+# blosc 0.0.9
+
+* Solved sanitiser issue
+
+# blosc 0.0.8
+
+* Added support for encoding and decoding string
+  data types
+* Corrected configure script
+* Corrected some typos
+
 # blosc 0.0.6
 
 * Added `blosc_info()`
