@@ -1,3 +1,7 @@
+# blosc 0.1.2
+
+* Updates to configure script
+
 # blosc 0.1.1
 
 * Addressed CRAN check issues

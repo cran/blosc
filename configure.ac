@@ -22,7 +22,7 @@ AC_PROG_CPP
 
 m4_pattern_allow([PKG_CONFIG_NAME])
 PKG_CONFIG_NAME="blosc"
-PKG_LIBS="-lblosc"
+PKG_LIBS=""
 PKG_CPPFLAGS=""
 
 PKG_PROG_PKG_CONFIG
@@ -41,9 +41,27 @@ if test "x${INCLUDE_DIR}${LIB_DIR}" = x; then
       ;;
     esac
   fi
-  if test "x${PKGCONFIG_CFLAGS}${PKGCONFIG_LIBS}" = x; then
-    case "${host_os}" in
-      darwin*)
+  if test "x${PKGCONFIG_CFLAGS}${PKGCONFIG_LIBS}" != x; then
+    echo "Found pkg-config cflags and libs!"
+    PKG_CPPFLAGS="${PKGCONFIG_CFLAGS}"
+    PKG_LIBS="${PKGCONFIG_LIBS}"
+  fi
+else
+  echo "Found INCLUDE_DIR and/or LIB_DIR!"
+  PKG_CPPFLAGS="-I${INCLUDE_DIR} ${PKG_CPPFLAGS}"
+  PKG_LIBS="-L${LIB_DIR} ${PKG_LIBS}"
+fi
+
+if test "x${PKG_CPPFLAGS}" = x; then
+  case "${host_os}" in
+    darwin*)
+      AC_MSG_NOTICE([attempting to install blosc from mac.R-project.org])
+      SILENT_INSTALL_R=1
+      blosc_mac_ok=no
+      sudo "${R_HOME}/Rscript" -e "source('https://mac.R-project.org/bin/install.R');install.libs('blosc')" && blosc_mac_ok=yes
+      AC_MSG_CHECKING([Installed from mac.R-project.org])
+      AC_MSG_RESULT([${blosc_mac_ok}])
+
       cpre=''
       for pre in /usr /usr/X11 /usr/X11R6 /usr/local /opt /opt/R/$(uname -m) /sw; do
         if test -e "${pre}/include/blosc.h"; then
@@ -58,26 +76,12 @@ if test "x${INCLUDE_DIR}${LIB_DIR}" = x; then
           PKG_LIBS="-L${cpre}/lib -lblosc -llz4 -lzstd -lz"
         fi
       fi
+
     ;;
-    esac
-  else
-    echo "Found pkg-config cflags and libs!"
-    PKG_CPPFLAGS="${PKGCONFIG_CFLAGS}"
-    PKG_LIBS="${PKGCONFIG_LIBS}"
-  fi
-else
-  echo "Found INCLUDE_DIR and/or LIB_DIR!"
-  PKG_CPPFLAGS="-I${INCLUDE_DIR} ${PKG_CPPFLAGS}"
-  PKG_LIBS="-L${LIB_DIR} ${PKG_LIBS}"
+  esac
 fi
 
-# check that the version of blosc works with R package.
-AC_MSG_CHECKING([whether the blosc will work in R package])
-blosc_inst_ok=no
-${CXX} ${CPPFLAGS} ${PKG_CPPFLAGS} ${CFLAGS} -E tools/version.cpp >/dev/null 2>&1 && blosc_inst_ok=yes
-AC_MSG_RESULT([${blosc_inst_ok}])
-
-if test "x${blosc_inst_ok}" = xno; then
+if test "x${PKG_CPPFLAGS}${PKG_LIBS}" = x; then
     echo "
   -----------------------------------------------------------------------
 
@@ -120,6 +124,31 @@ echo "
 
   --------------------------------------------------
 "
+
+## check headers only after we're done with pkg-config
+AC_CHECK_HEADERS([blosc.h],, [AC_MSG_ERROR([blosc headers are not usable.
+Please make sure you have installed development files for blosc.])])
+
+# check that the version of blosc works with R package.
+AC_MSG_CHECKING([whether available blosc version is good enough])
+blosc_inst_ok=no
+${CXX} ${CPPFLAGS} ${PKG_CPPFLAGS} ${CFLAGS} -E tools/version.cpp >/dev/null 2>&1 && blosc_inst_ok=yes
+AC_MSG_RESULT([${blosc_inst_ok}])
+
+LDFLAGS="${PKG_CPPFLAGS}"
+LIBS="${PKG_LIBS}"
+AC_MSG_CHECKING([whether blosc programs can be compiled])
+AC_LINK_IFELSE([AC_LANG_SOURCE([
+#include "blosc.h"
+int main(void) {
+  blosc_init();
+  int n = blosc_get_nthreads();
+  return 0;
+}
+])],[AC_MSG_RESULT(yes)],
+[AC_MSG_ERROR([Cannot compile a simple blosc program. See config.log for details.])])
+
+
 AC_SUBST([PKG_CPPFLAGS], ["${PKG_CPPFLAGS}"])
 AC_SUBST([PKG_LIBS], ["${PKG_LIBS}"])
 AC_CONFIG_FILES([src/Makevars])
